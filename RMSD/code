@@ -1,1 +1,364 @@
+#Altered version of Andrey script 
 
+import numpy as np
+import math
+import glob
+aa_short = {'G': 'glycine', 'A': 'alanine', 'L': 'leucine', 'M': 'methionine', 'F': 'phenalalanine', 'W': 'tryptophan', 'K': 'lysine', 
+'Q':'glutamine', 'E':'glutamic_acid', 'S':'serine', 'P': 'proline', 'V': 'valine', 'I': 'isoleucine', 'C': 'cysteine', 'Y': 'tyrosine', 
+'H': 'histidine', 'R': 'arginine', 'N': 'asparagine', 'D': 'aspartic_acid', 'T': 'threonine'}
+
+
+# function to read pdb file named 'filename.pdb'
+# return dictionary with atom list with serial atoms as keys and properties as values
+def parse_pdb(filename):
+	arq = open(filename+'.pdb', 'r')
+	atm_array = {}
+
+	lines = arq.readlines()
+	for line in lines:
+		if line.startswith('ATOM') or line.startswith('HETATM'):
+			record_type = line[0:5].strip()
+			serial = int(line[6:11])
+			name = line[12:16].strip()
+			if line[16].isspace():
+				alt_loc = None
+			else:
+				alt_loc = line[16]
+			res_name = line[17:20]
+			if line[21].isspace():
+				chain = None
+			else:
+				chain = line[21]
+			if line[22:26].isspace():
+				res_seq = None
+			else:
+				res_seq = int(line[22:26])
+			if line[26].isspace():
+				i_code = None
+			else:
+				i_code = line[26]
+			x = float(line[30:38])
+			y = float(line[38:46])
+			z = float(line[46:54])
+			coord = np.array([x, y, z])
+			occupancy = float(line[54:60])
+			temp_factor = float(line[60:66])
+			if line[76:78].isspace():
+				element = None
+			else:
+				element = line[76:78].strip()
+			if line[78:80].isspace():
+				charge = None
+			else:
+				charge = line[78:80]
+				charge = int(charge[::-1])
+			prop = dict()
+			prop['recordType'] = record_type
+			prop['name'] = name
+			prop['altLoc'] = alt_loc
+			prop['resName'] = res_name
+			prop['chain'] = chain
+			prop['resSeq'] = res_seq
+			prop['iCode'] = i_code
+			prop['coord'] = coord
+			prop['occupancy'] = occupancy
+			prop['tempFactor'] = temp_factor
+			prop['element'] = element
+			prop['charge'] = charge
+			atm_array[serial] = prop
+	
+	arq.close()
+	return atm_array
+
+
+# generates pdb file from atom dictonary atm_list
+# creates file 'filename.pdb'
+def create_pdb(filename, atm_list):
+	with open(filename+'.pdb', 'w') as arq:
+		i = 1
+		for serial, prop in atm_list.items():
+			arq.write(compose_pdb_line(serial, prop)+'\n')
+		arq.write('TER\n')
+	arq.close()
+
+
+# formats pdb line based on atom properties
+# returns pdb line
+def compose_pdb_line(serial, prop):
+	line = ''
+	line += prop['recordType']
+	line += ' '*(11-len(str(serial))-len(prop['recordType']))
+	line += str(serial)
+	if prop['altLoc'] is None:
+		line += ' '
+	else:
+		line += prop['altLoc']
+	if not prop['name'][0].isdigit():
+		line += ' '
+	line += prop['name']
+	if prop['name'][0].isdigit():
+		line += ' '*(5-len(prop['name']))
+	else:
+		line += ' '*(4-len(prop['name']))
+
+	line += prop['resName']
+	line += ' '
+	if prop['chain'] is None:
+		line += ' '
+	else:
+		line += prop['chain']
+	line += ' '*(4-len(str(prop['resSeq'])))
+	if prop['resSeq'] is not None:
+		line += str(prop['resSeq'])
+	if prop['iCode'] is None:
+		line += ' '
+	else:
+		line += prop['iCode']
+	line += ' '*(3+(8-len("{0:.3f}".format(round(prop['coord'][0],3)))))
+	for i in range(3):
+		line += "{0:.3f}".format((round(prop['coord'][i],3)))
+		if(i < 2):
+			line += ' '*(8-len("{0:.3f}".format(round(prop['coord'][i+1],3))))
+	line += ' '*(6-len("{0:.2f}".format(round(prop['occupancy'],2))))
+	line += "{0:.2f}".format(round(prop['occupancy'],2))
+	line += ' '*(6-len("{0:.2f}".format(round(prop['tempFactor'],2))))
+	line += "{0:.2f}".format(round(prop['tempFactor'],2))
+	line += ' '*10
+	if prop['element'] is None:
+		line += ' '*2
+	else:
+		line += ' '*(2-len(prop['element']))
+		line += prop['element']
+	if prop['charge'] is None:
+		line += ' '*2
+	else:
+		line += ' '*(2-len(str(prop['charge'])))
+		line += str(prop['charge'])[::-1]
+	return line
+
+
+# appends new amino acid into atom dictionary atm_list
+# searches amino acid name in aa_short for the one letter amino acid
+# returns new atom dictionary
+def append_res_pdb(atm_list, res_letter):
+	file_name = aa_short[res_letter]
+	new_res = parse_pdb(file_name)
+	next_serial = max(k for k, v in atm_list.iteritems()) + 1
+	next_res_seq = atm_list[max(k for k, v in atm_list.iteritems())]['resSeq'] + 1
+	for serial, props in new_res.items():
+		props['resSeq'] = next_res_seq
+		atm_list[next_serial] = props
+		next_serial += 1
+	return atm_list
+
+
+def three_point_angle(a, b, c):
+	ba = a - b
+	bc = c - b
+
+	cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+	angle = np.arccos(cosine_angle)
+
+	return np.degrees(angle)
+
+
+# translates atom dictionary atm_list with coordinates v(x,y,z)
+# returns translated atom dictionary
+def translate_atoms(atm_list, v):
+	for serial, prop in atm_list.items():
+		for i in range(3):
+			atm_list[serial]['coord'][i] += v[i]
+	return atm_list
+
+
+def translation_matrices(a, b):
+	x, y, z = a - b
+	T = np.array([  [1,       0,         0,        -x],
+					[0,       1,         0,        -y],
+					[0,       0,         1,        -z],
+					[0,       0,         0,         1]
+					])
+	T_inv = np.array([  [1,       0,         0,        x],
+						[0,       1,         0,        y],
+						[0,       0,         1,        z],
+						[0,       0,         0,        1]
+						])
+	return T, T_inv
+
+	
+def x_rotation_matrices(a, b):
+	axis = a - b
+	axis_unit = axis / (axis**2).sum()**0.5
+	proj_length_yz = (axis_unit[1]**2+axis_unit[2]**2)**0.5
+	
+	R_x = np.array([[1,                 0,                             		 		0,                  0],
+					[0,       axis_unit[2]/proj_length_yz,         -axis_unit[1]/proj_length_yz,        0],
+					[0,       axis_unit[1]/proj_length_yz,         axis_unit[2]/proj_length_yz,         0],
+					[0,                 0,                              			0,                  1]
+					])
+	R_x_inv = np.array([[1,                 0,                              			0,                  0],
+						[0,       axis_unit[2]/proj_length_yz,         axis_unit[1]/proj_length_yz,         0],
+						[0,       -axis_unit[1]/proj_length_yz,        axis_unit[2]/proj_length_yz,         0],
+						[0,                 0,                              			0,                  1]
+						])
+	return R_x, R_x_inv
+
+
+def y_rotation_matrices(a, b):
+	axis = a - b
+	axis_unit = axis / (axis**2).sum()**0.5
+	proj_length_yz = (axis_unit[1]**2+axis_unit[2]**2)**0.5
+	
+	R_y = np.array([[proj_length_yz,      0,    -axis_unit[0],     0],
+					[0,                   1,         0,        	   0],
+					[axis_unit[0],        0,  	proj_length_yz,    0],
+					[0,                   0,         0,     	   1]
+					])
+	R_y_inv = np.array([[proj_length_yz,      0,    axis_unit[0],   0],
+						[0,                   1,          0,        0],
+						[-axis_unit[0],       0,    proj_length_yz, 0],
+						[0,                   0,          0,        1]
+						])
+	return R_y, R_y_inv
+
+	
+def z_rotation_matrix(theta):
+	R_z = np.array([[math.cos(theta),    -math.sin(theta),     0,   0],
+					[math.sin(theta),     math.cos(theta),     0,   0],
+					[0,                        0,              1,   0],
+					[0,                        0,          0,       1]
+					])
+	return R_z
+
+
+def rotate_arbitrary_axis(a, b, theta, atm_list):
+	T, T_inv = translation_matrices(a, b)
+	R_x, R_x_inv = x_rotation_matrices(a, b)
+	R_y, R_y_inv = y_rotation_matrices(a, b)
+	R_z = z_rotation_matrix(theta)
+	
+	matrix = []
+	for serial, prop in atm_list.items():
+		coord = []
+		for i in range(4):
+			if i < 3:
+				coord.append(prop['coord'][i])
+			else:
+				coord.append(1)
+		matrix.append(np.dot(T_inv, np.dot(R_x_inv, np.dot(R_y_inv, np.dot(R_z, np.dot(R_y, np.dot(R_x, np.dot(T, coord))))))))
+		
+	i = 0
+	for serial, prop in atm_list.items():
+		for j in range(3):
+			atm_list[serial]['coord'][j] = matrix[i][j]
+		i += 1
+	return atm_list
+	
+
+# fixes serial number from atom dictionary atm_list
+# return new atom dictionary with fixed serial numbers
+def reserialize_atoms(atm_list):
+	curr = 1
+	for serial, prop in atm_list.items():
+		if serial != curr:
+			atm_list[curr] = prop
+			del atm_list[serial]
+		curr += 1
+	return atm_list
+
+
+# removes OH from the last but one AA, the 1H from the last AA and translates the last AA
+# returns new atom dictionary
+def peptide_bond_spatial_op(atm_list):
+	last_aa_res_seq = atm_list[max(k for k, v in atm_list.iteritems())]['resSeq']
+	last_aa_atm_list = {}
+	proline = False
+	for serial, prop in atm_list.items():
+		if prop['resSeq'] == last_aa_res_seq - 1:
+			if prop['name'] == 'O':
+				carbonyl_coord_a = prop['coord']
+			if prop['name'] == 'OC':
+				oxygen_coord = prop['coord']
+				oxygen_serial = serial
+			if prop['name'] == 'HOC' or prop['name'] == 'HO' or prop['name'] == 'HC':
+				o_hydrogen_serial = serial
+		if prop['resSeq'] == last_aa_res_seq:
+			last_aa_atm_list[serial] = prop
+			if prop['resName'] == 'PRO':
+				proline = True
+				if prop['name'] == 'H':
+					n_hydrogen_serial = serial
+			else:
+				if prop['name'] == '1H':
+					h1_coord = prop['coord']
+				if prop['name'] == '2H':
+					h2_coord = prop['coord']
+			if prop['name'] == 'O':
+				carbonyl_coord_b = prop['coord']
+			if prop['name'] == 'N':
+				n_coord = prop['coord']
+			if prop['name'] == 'C':
+				c_coord = prop['coord']
+			if prop['name'] == 'CA':
+				ca_coord = prop['coord']
+	if not proline:
+		hydrogen = find_trans_hydrogen(h1_coord, h2_coord, carbonyl_coord_b)
+	distance = oxygen_coord - n_coord
+	translated_last_aa_atm_list = translate_atoms(last_aa_atm_list, distance)
+	for serial, prop in translated_last_aa_atm_list.items():
+		atm_list[serial]['coord'] = translated_last_aa_atm_list[serial]['coord']
+		if not proline and prop['name'] == hydrogen:
+			n_hydrogen_serial = serial
+
+	for serial, prop in atm_list.items():
+		if prop['resSeq'] == last_aa_res_seq:
+			last_aa_atm_list[serial] = prop
+			if prop['name'] == 'O':
+				carbonyl_coord_b = prop['coord']
+			if prop['name'] == 'N':
+				n_coord = prop['coord']
+			if prop['name'] == 'C':
+				c_coord = prop['coord']
+			if prop['name'] == 'CA':
+				ca_coord = prop['coord']
+	if three_point_angle(carbonyl_coord_a, ca_coord, carbonyl_coord_b) < 90:
+		rotated_last_aa_atm_list = rotate_arbitrary_axis(n_coord, c_coord, np.pi, last_aa_atm_list)
+		for serial, prop in rotated_last_aa_atm_list.items():
+			if prop['name'] == 'N':
+				new_n_coord = prop['coord']
+		distance = oxygen_coord - new_n_coord
+		translated_last_aa_atm_list = translate_atoms(rotated_last_aa_atm_list, distance)
+		for serial, prop in rotated_last_aa_atm_list.items():
+			atm_list[serial]['coord'] = translated_last_aa_atm_list[serial]['coord']
+
+	del atm_list[oxygen_serial]
+	del atm_list[n_hydrogen_serial]
+	del atm_list[o_hydrogen_serial]
+
+	fixed_atm_list = reserialize_atoms(atm_list)
+
+	return fixed_atm_list
+
+
+def find_trans_hydrogen(h1, h2, o):
+	dist_h1 = np.linalg.norm(h1-o)
+	dist_h2 = np.linalg.norm(h2-o)
+	if dist_h1 > dist_h2:
+		return '1H'
+	else:
+		return '2H'
+
+
+def peptide_bond(atm_list, res_letter):
+	new_atm_list = append_res_pdb(atm_list, res_letter)
+	new_atm_list = peptide_bond_spatial_op(new_atm_list)
+	return new_atm_list
+
+aa = "TTCCPSIVARSNFNVCRLPGTPEAICATYTGCIIIPGATCPGDYAN"
+
+aa_pdb = parse_pdb(aa_short[aa[0]])
+for i in range(len(aa)):
+	if i != 0:
+		aa_pdb = peptide_bond(aa_pdb,aa[i])
+
+create_pdb('output',aa_pdb)
