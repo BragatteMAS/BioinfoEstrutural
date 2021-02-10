@@ -1,0 +1,16 @@
+#ref.: https://pychimera.readthedocs.io/en/latest/install.html
+##What is the use of this command lines:
+
+##Install PyChimera
+#With conda and UCSF Chimera in your system, just type this at terminal from anaconda env:
+conda install -c insilichem pychimera
+#system with python < 2.7 necessary redirect or create CHIMERADIR:
+conda create -n pychimera -c insilichem python=2.7 pychimera
+source activate pychimera
+
+
+##Make sure chimera can be found!
+#In Linux this can be done in your .bashrc or equivalent.
+export CHIMERADIR="~/.local/UCSF-Chimera"  # point to the actual location in your system
+#export CHIMERADIR="/home/bragatte/.local/Chimera
+#export CHIMERADIR="~/.local/Chimera
